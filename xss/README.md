@@ -199,3 +199,269 @@ Bei DOM-basiertem XSS entsteht die Schwachstelle im JavaScript des Browsers, wen
 
 #### 4. Bonus
 Angenommen, du könntest den Code auf dem Server nicht beeinflussen, bist aber trotzdem für die Sicherheit zuständig. Was könntest du tun, um XSS-Angriffe zu erkennen und abzuwehren?
+
+# IT-Security Lab – Cross-Site Scripting (XSS)
+
+## Meine Lösungen und Testergebnisse
+
+**Modul:** IN267 – IT-Security  
+**Thema:** Stored XSS, Reflected XSS und DOM-based XSS  
+**Technologien:** Python, Flask, Jinja2, JavaScript, SQLite und Docker
+
+## 1. Ziel des Labs
+
+In diesem Lab wurden drei Arten von Cross-Site Scripting untersucht:
+
+- **Stored XSS:** Schadcode wird dauerhaft in der Datenbank gespeichert.
+- **Reflected XSS:** Schadcode wird über einen URL-Parameter an den Server übermittelt und in der Webseite ausgegeben.
+- **DOM-based XSS:** Schadcode wird direkt im Browser durch unsichere JavaScript-Verarbeitung ausgeführt.
+
+Anschliessend wurden die Schwachstellen behoben und die Korrekturen getestet.
+
+## 2. Lab starten
+
+Das Lab wird im Hauptverzeichnis des Repositories gestartet.
+
+```bash
+docker compose --profile xss up -d --build
+```
+
+Die Anwendung ist anschliessend erreichbar unter:
+
+http://localhost:5002
+
+Der Docker-Container wurde erfolgreich gestartet.
+
+## 3. Level 1 – Stored XSS
+
+### Durchführung
+
+Auf der Produktseite wurde eine Kundenbewertung mit folgendem Payload erstellt:
+
+```html
+<img src=x onerror="alert('Stored XSS!')">
+```
+
+Vor der Sicherheitskorrektur wurde der JavaScript-Code beim Anzeigen der Bewertung ausgeführt. Auch nach dem erneuten Laden der Webseite konnte der Angriff ausgelöst werden.
+
+### Fragen und Antworten
+
+**1. Was wird auf dem Server in der Datenbank gespeichert?**
+
+Der eingegebene Bewertungstext wird zusammen mit den Bewertungsdaten in der SQLite-Datenbank gespeichert. Dazu gehört auch der eingeschleuste HTML- und JavaScript-Code.
+
+**2. Was würde in den Serverlogs stehen?**
+
+In den HTTP-Request-Logs erscheint normalerweise der POST-Request zum Speichern der Bewertung. Der vollständige Payload ist in den angezeigten URL-Logs nicht automatisch sichtbar, weil er im Request-Body übertragen wird.
+
+**3. Ist der Payload in der Bewertung im Browser sichtbar?**
+
+Vor der Korrektur wird der Payload als HTML interpretiert. Deshalb wird der Code nicht unbedingt als normaler Text angezeigt. Stattdessen wird das JavaScript ausgeführt.
+
+Nach der Korrektur wird der Payload als Text dargestellt.
+
+**4. Ist der Payload im HTML-Code des Browsers sichtbar?**
+
+Ja. Vor der Korrektur kann der injizierte HTML-Code in den Entwicklertools im DOM untersucht werden.
+
+Nach der Korrektur wird der Code durch HTML-Escaping als Text behandelt und nicht mehr als aktives HTML-Element interpretiert.
+
+## 4. Level 2 – Reflected XSS
+
+### Durchführung
+
+Zuerst wurde der URL-Parameter `ref` untersucht:
+
+```text
+http://localhost:5002/product?ref=SommerAktion
+```
+
+Der Wert wurde im Partner-Aktionsbanner angezeigt.
+
+Anschliessend wurde folgender Payload getestet:
+
+```html
+<img src=x onerror="alert('Reflected XSS!')">
+```
+
+Der Payload wurde URL-kodiert und über den Parameter `ref` übergeben.
+
+Vor der Korrektur erschien das JavaScript-Dialogfenster mit der Meldung `Reflected XSS!`.
+
+### Fake-Login – Phishing-Demonstration
+
+Für die Phishing-Simulation wurde ein eigenes HTML/CSS-Loginfenster erstellt.
+
+Das Fenster enthält:
+
+- Den Titel „Sitzung abgelaufen“
+- Die Meldung „Demo: Bitte erneut anmelden“
+- Ein Passwort-Eingabefeld
+- Einen Anmelden-Button
+
+Das Fenster wurde erfolgreich über einen manipulierten Link auf der Produktseite angezeigt.
+
+Beim Klicken auf den Button erschien eine Demo-Meldung. Es wurden keine Passwörter an einen externen Server übertragen.
+
+**Hinweis:** Die bisher getestete Version zeigte eine feste Demo-Meldung. Das Anzeigen des eingegebenen Passwortwertes, wie im Aufgabenblatt gefordert, muss noch ergänzt und getestet werden.
+
+### Support-Ticket
+
+Der manipulierte Link wurde über das Support-Formular eingereicht.
+
+Im internen Ticketsystem konnte der Link geöffnet werden. Dabei erschien das gefälschte Loginfenster.
+
+### Server-Logs
+
+In den Server-Logs war der manipulierte URL-Parameter sichtbar.
+
+**Erkenntnis:** Bei Reflected XSS wird der Payload als Teil des HTTP-Requests an den Server übertragen und kann deshalb in URL-Logs sichtbar sein.
+
+## 5. Level 3 – DOM-based XSS
+
+### Durchführung
+
+Beim DOM-based XSS wurde anstelle eines Query-Parameters ein URL-Fragment verwendet:
+
+```text
+http://localhost:5002/product#ref=...
+```
+
+Der folgende Payload wurde getestet:
+
+```html
+<img src=x onerror="alert('DOM XSS!')">
+```
+
+Vor der Sicherheitskorrektur erschien das Dialogfenster mit der Meldung `DOM XSS!`.
+
+### Phishing über DOM
+
+Der Fake-Login-Payload wurde ebenfalls über das URL-Fragment `#ref=` ausgeführt.
+
+Das gefälschte Loginfenster erschien direkt auf der Produktseite.
+
+### Vergleich der Server-Logs
+
+**Reflected XSS:**
+
+```text
+GET /product?ref=...
+```
+
+**DOM-based XSS:**
+
+```text
+GET /product
+```
+
+**Erkenntnis:** Der Teil einer URL nach dem Zeichen `#` wird nicht an den Webserver übertragen.
+
+Deshalb ist der DOM-XSS-Payload in den klassischen HTTP-Request-Logs nicht sichtbar.
+
+## 6. Fixing-Phase – Sicherheitslücken beheben
+
+Alle drei Schwachstellen wurden in der Datei `xss/templates/product.html` bearbeitet.
+
+### Fix 1 – Stored XSS
+
+Unsicherer Code:
+
+```html
+<div>{{ review.content | safe }}</div>
+```
+
+Sichere Variante:
+
+```html
+<div>{{ review.content }}</div>
+```
+
+**Erklärung:** Der Filter `safe` deaktiviert das automatische HTML-Escaping von Jinja2. Nach dem Entfernen wird der eingegebene HTML-Code als Text behandelt.
+
+### Fix 2 – Reflected XSS
+
+Unsicherer Code:
+
+```html
+<strong>{{ ref_param | safe }}</strong>
+```
+
+Sichere Variante:
+
+```html
+<strong>{{ ref_param }}</strong>
+```
+
+**Erklärung:** Durch das automatische HTML-Escaping wird verhindert, dass der URL-Parameter als ausführbarer HTML-Code interpretiert wird.
+
+### Fix 3 – DOM-based XSS
+
+Unsicherer Code:
+
+```javascript
+domContainer.innerHTML = payload;
+```
+
+Sichere Variante:
+
+```javascript
+domContainer.textContent = payload;
+```
+
+**Erklärung:** `innerHTML` interpretiert Eingaben als HTML. `textContent` behandelt sie als reinen Text.
+
+Für die sichere Gestaltung des Banners kann zusätzlich `document.createElement()` verwendet werden.
+
+## 7. Verifikation
+
+Nach den Korrekturen wurde das Docker-Image neu gebaut:
+
+```bash
+docker compose --profile xss up -d --build
+```
+
+Die drei ursprünglichen XSS-Payloads wurden erneut getestet.
+
+| Test | Ergebnis |
+|---|---|
+| Stored XSS | Payload erscheint als Text |
+| Reflected XSS | Payload erscheint als Text |
+| DOM-based XSS | Payload erscheint als Text |
+
+Bei diesen drei Tests wurde kein JavaScript mehr ausgeführt.
+
+Die manipulierten Support-Ticket-Links aus Level 2 (Reflected XSS) und Level 3 (DOM-based XSS) wurden nach den Sicherheitskorrekturen erneut geöffnet.
+
+**Ergebnis:** In beiden Fällen wurde der eingeschleuste HTML-Code nur als harmloser Text angezeigt. Weder das Fake-Login-Fenster noch ein JavaScript-Alert wurde ausgeführt.
+
+Damit wurde bestätigt, dass alle drei XSS-Schwachstellen erfolgreich behoben wurden.
+
+## 8. Bonus – Schutz ohne Änderung des Servercodes
+
+Wenn der Servercode nicht verändert werden kann, gibt es verschiedene zusätzliche Schutzmassnahmen.
+
+**Content Security Policy (CSP):** Eine restriktive CSP kann die Ausführung von Inline-JavaScript verhindern. Sie kann beispielsweise über einen vorgeschalteten Reverse Proxy als HTTP-Header gesetzt werden.
+
+**Web Application Firewall (WAF):** Eine WAF kann verdächtige HTTP-Anfragen erkennen und blockieren. Sie hilft insbesondere bei Angriffen, deren Payload über URL-Parameter übertragen wird.
+
+**Monitoring und Logging:** Verdächtige Anfragen können protokolliert und analysiert werden. DOM-based XSS ist jedoch schwieriger zu erkennen, weil URL-Fragmente nicht an den Server übertragen werden.
+
+**Browser-Schutz:** Sicherheitsmechanismen des Browsers können bestimmte Angriffe zusätzlich erschweren.
+
+Diese Massnahmen reduzieren das Risiko, ersetzen aber keine sichere Verarbeitung von Benutzereingaben im Anwendungscode.
+
+## 9. Fazit
+
+In diesem Lab wurden drei verschiedene XSS-Schwachstellen praktisch untersucht.
+
+Dabei wurde deutlich, dass Stored XSS, Reflected XSS und DOM-based XSS unterschiedliche Angriffswege verwenden.
+
+Die Sicherheitslücken konnten durch das automatische HTML-Escaping von Jinja2 und die Verwendung von `textContent` behoben werden.
+
+Die abschliessenden Tests zeigten, dass die drei getesteten Payloads nach den Korrekturen nur noch als Text dargestellt wurden.
+
+## 10. Quellen
+
+- OWASP – Cross Site Scripting: https://community.owasp.org/attacks/xss/
+- OWASP – Cross Site Scripting Prevention Cheat Sheet: https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html
